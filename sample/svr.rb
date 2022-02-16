@@ -6,7 +6,13 @@
 
 require "socket"
 
-gs = TCPServer.open(0)
+if ARGV.length >= 2
+  host = ARGV.shift
+else
+  host = "localhost"
+end
+
+gs = TCPServer.open(host, ARGV.shift)
 addr = gs.addr
 addr.shift
 printf("server is on %s\n", addr.join(":"))
@@ -22,12 +28,12 @@ loop do
       print(s, " is accepted\n")
     else
       if s.eof?
-	print(s, " is gone\n")
-	s.close
-	socks.delete(s)
+        print(s, " is gone\n")
+        s.close
+        socks.delete(s)
       # single thread gets may block whole service
       elsif str = s.gets
-	  s.write(str)
+        s.write(str)
       end
     end
   end
