@@ -1,10 +1,13 @@
-require 'timeout'
 require 'io/wait'
 
 class Reline::GeneralIO
   def self.reset(encoding: nil)
     @@pasting = false
-    @@encoding = encoding
+    if encoding
+      @@encoding = encoding
+    elsif defined?(@@encoding)
+      remove_class_variable(:@@encoding)
+    end
   end
 
   def self.encoding
@@ -31,7 +34,11 @@ class Reline::GeneralIO
     @@input = val
   end
 
-  def self.getc
+  def self.with_raw_input
+    yield
+  end
+
+  def self.getc(_timeout_second)
     unless @@buf.empty?
       return @@buf.shift
     end
@@ -55,6 +62,12 @@ class Reline::GeneralIO
 
   def self.cursor_pos
     Reline::CursorPos.new(1, 1)
+  end
+
+  def self.hide_cursor
+  end
+
+  def self.show_cursor
   end
 
   def self.move_cursor_column(val)

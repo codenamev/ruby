@@ -48,6 +48,20 @@ describe "The defined? keyword for literals" do
 end
 
 describe "The defined? keyword when called with a method name" do
+  before :each do
+    ScratchPad.clear
+  end
+
+  it "does not call the method" do
+    defined?(DefinedSpecs.side_effects).should == "method"
+    ScratchPad.recorded.should != :defined_specs_side_effects
+  end
+
+  it "does not execute the arguments" do
+    defined?(DefinedSpecs.any_args(DefinedSpecs.side_effects)).should == "method"
+    ScratchPad.recorded.should != :defined_specs_side_effects
+  end
+
   describe "without a receiver" do
     it "returns 'method' if the method is defined" do
       ret = defined?(puts)
@@ -164,6 +178,32 @@ describe "The defined? keyword when called with a method name" do
     it "returns 'method' if the method is defined on the object the receiver returns" do
       defined?(DefinedSpecs.fixnum_method / 2).should == "method"
       ScratchPad.recorded.should == :defined_specs_fixnum_method
+    end
+  end
+
+  describe "having a throw in the receiver" do
+    it "escapes defined? and performs the throw semantics as normal" do
+      defined_returned = false
+      catch(:out) {
+        # NOTE: defined? behaves differently if it is called in a void context, see below
+        defined?(throw(:out, 42).foo).should == :unreachable
+        defined_returned = true
+      }.should == 42
+      defined_returned.should == false
+    end
+  end
+
+  describe "in a void context" do
+    it "does not execute the receiver" do
+      ScratchPad.record :not_executed
+      defined?(DefinedSpecs.side_effects / 2)
+      ScratchPad.recorded.should == :not_executed
+    end
+
+    it "warns about the void context when parsing it" do
+      -> {
+        eval "defined?(DefinedSpecs.side_effects / 2); 42"
+      }.should complain(/warning: possibly useless use of defined\? in void context/, verbose: true)
     end
   end
 end

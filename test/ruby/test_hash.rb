@@ -219,6 +219,15 @@ class TestHash < Test::Unit::TestCase
     assert_equal('default', h['spurious'])
   end
 
+  def test_st_literal_memory_leak
+    assert_no_memory_leak([], "", "#{<<~'end;'}", rss: true)
+      1_000_000.times do
+        # >8 element hashes are ST allocated rather than AR allocated
+        {a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9}
+      end
+    end;
+  end
+
   def test_try_convert
     assert_equal({1=>2}, Hash.try_convert({1=>2}))
     assert_equal(nil, Hash.try_convert("1=>2"))
@@ -302,6 +311,20 @@ class TestHash < Test::Unit::TestCase
     before = ObjectSpace.count_objects[:T_STRING]
     5.times{ h["abc"] }
     assert_equal before, ObjectSpace.count_objects[:T_STRING]
+  end
+
+  def test_AREF_fstring_key_default_proc
+    assert_separately([], "#{<<~"begin;"}\n#{<<~'end;'}")
+    begin;
+      h = Hash.new do |h, k|
+        k.frozen?
+      end
+
+      str = "foo"
+      refute str.frozen? # assumes this file is frozen_string_literal: false
+      refute h[str]
+      refute h["foo"]
+    end;
   end
 
   def test_ASET_fstring_key
@@ -721,6 +744,21 @@ class TestHash < Test::Unit::TestCase
     assert_equal(100, h[a])
   end
 
+  def test_rehash_memory_leak
+    assert_no_memory_leak([], <<~PREP, <<~CODE, rss: true)
+      ar_hash = 1.times.map { |i| [i, i] }.to_h
+      st_hash = 10.times.map { |i| [i, i] }.to_h
+
+      code = proc do
+        ar_hash.rehash
+        st_hash.rehash
+      end
+      1_000.times(&code)
+    PREP
+      1_000_000.times(&code)
+    CODE
+  end
+
   def test_reject
     assert_equal({3=>4,5=>6}, @cls[1=>2,3=>4,5=>6].reject {|k, v| k + v < 7 })
 
@@ -834,6 +872,16 @@ class TestHash < Test::Unit::TestCase
     h2.replace(h1)
     GC.start
     assert(true)
+  end
+
+  def test_replace_st_with_ar
+    # ST hash
+    h1 = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9 }
+    # AR hash
+    h2 = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7 }
+    # Replace ST hash with AR hash
+    h1.replace(h2)
+    assert_equal(h2, h1)
   end
 
   def test_shift
@@ -1292,7 +1340,7 @@ class TestHash < Test::Unit::TestCase
   end
 
   def test_replace_memory_leak
-    assert_no_memory_leak([], "#{<<-"begin;"}", "#{<<-'end;'}")
+    assert_no_memory_leak([], "#{<<-"begin;"}", "#{<<-'end;'}", rss: true)
     h = ("aa".."zz").each_with_index.to_h
     10_000.times {h.dup}
     begin;
@@ -1540,6 +1588,17 @@ class TestHash < Test::Unit::TestCase
         c.call
       end
     end
+  end
+
+  def hash_iter_recursion(h, level)
+    return if level == 0
+    h.each_key {}
+    h.each_value { hash_iter_recursion(h, level - 1) }
+  end
+
+  def test_iterlevel_in_ivar_bug19589
+    h = { a: nil }
+    hash_iter_recursion(h, 200)
   end
 
   def test_threaded_iter_level
@@ -2164,6 +2223,27 @@ class TestHash < Test::Unit::TestCase
     assert_raise(ArgumentError) do
       {a: 1}.each(&->(k, v) {})
     end
+  end
+
+  # Previously this test would fail because rb_hash inside opt_aref would look
+  # at the current method name
+  def test_hash_recursion_independent_of_mid
+    o = Class.new do
+      def hash(h, k)
+        h[k]
+      end
+
+      def any_other_name(h, k)
+        h[k]
+      end
+    end.new
+
+    rec = []; rec << rec
+
+    h = @cls[]
+    h[rec] = 1
+    assert o.hash(h, rec)
+    assert o.any_other_name(h, rec)
   end
 
   def test_any_hash_fixable

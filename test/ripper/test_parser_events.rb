@@ -152,6 +152,45 @@ class TestRipper::ParserEvents < Test::Unit::TestCase
       thru_args_forward = false
       parse(code, :on_args_forward) {thru_args_forward = true}
       assert_equal true, thru_args_forward, "no args_forward for: #{code}"
+      parse(code, :on_params) {|*, block| assert_nil(block)}
+    end
+  end
+
+  def test_anonymous_block_forwarding
+    thru_args_add_block = false
+    parse('def b(&); c(&); end', :on_args_add_block) {thru_args_add_block = true}
+    assert_equal true, thru_args_add_block
+    assert_match "no anonymous block parameter", compile_error('def b; c(&); end')
+  end
+
+  def test_anonymous_rest_forwarding
+    [
+      'c(*)',
+      'c(*, *)',
+    ].each do |code|
+      thru_args_add_star = false
+      src = "def b(*); #{code} end"
+      parse(src, :on_args_add_star) {thru_args_add_star = true}
+      assert_equal true, thru_args_add_star, src
+
+      src = "def b; #{code} end"
+      assert_match "no anonymous rest parameter", compile_error(src), src
+    end
+  end
+
+  def test_anonymous_keyword_rest_forwarding
+    [
+      'c(**)',
+      'c(k: 1, **)',
+      'c(**, k: 1)',
+    ].each do |code|
+      thru_assoc_splat = false
+      src = "def b(**); #{code} end"
+      parse(src, :on_assoc_splat) {thru_assoc_splat = true}
+      assert_equal true, thru_assoc_splat, src
+
+      src = "def b; #{code} end"
+      assert_match "no anonymous keyword rest parameter", compile_error(src), src
     end
   end
 
@@ -459,6 +498,23 @@ class TestRipper::ParserEvents < Test::Unit::TestCase
     tree = parse("self&.foo()", :on_call) {thru_call = true}
     assert_equal true, thru_call
     assert_equal "[call(ref(self),&.,foo,[])]", tree
+  end
+
+  def test_call_colon2
+    hook = Module.new do
+      def on_op(op)
+        super("(op: #{op.inspect})")
+      end
+      def on_call(recv, name, *args)
+        super(recv, "(method: #{name})", *args)
+      end
+      def on_ident(name)
+        super("(ident: #{name.inspect})")
+      end
+    end
+
+    parser = DummyParser.new("a::b").extend(hook)
+    assert_equal '[call(vcall((ident: "a")),(method: (op: "::")),(ident: "b"))]', parser.parse.to_s
   end
 
   def test_excessed_comma

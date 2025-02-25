@@ -1,4 +1,25 @@
+#include <stdbool.h>
+
 #include <fiddle.h>
+
+VALUE
+rb_fiddle_type_bool(void)
+{
+    if (sizeof(bool) == sizeof(char)) {
+        return INT2NUM(TYPE_UCHAR);
+    } else if (sizeof(bool) == sizeof(short)) {
+        return INT2NUM(TYPE_USHORT);
+    } else if (sizeof(bool) == sizeof(int)) {
+        return INT2NUM(TYPE_UINT);
+    } else if (sizeof(bool) == sizeof(long)) {
+        return INT2NUM(TYPE_ULONG);
+    } else {
+        rb_raise(rb_eNotImpError,
+                 "bool isn't supported: %u",
+                 (unsigned int)sizeof(bool));
+        return RUBY_Qnil;
+    }
+}
 
 VALUE
 rb_fiddle_type_ensure(VALUE type)
@@ -44,6 +65,7 @@ rb_fiddle_type_ensure(VALUE type)
         ID ptrdiff_t_id;
         ID intptr_t_id;
         ID uintptr_t_id;
+        ID bool_id;
         RUBY_CONST_ID(void_id, "void");
         RUBY_CONST_ID(voidp_id, "voidp");
         RUBY_CONST_ID(char_id, "char");
@@ -74,6 +96,7 @@ rb_fiddle_type_ensure(VALUE type)
         RUBY_CONST_ID(ptrdiff_t_id, "ptrdiff_t");
         RUBY_CONST_ID(intptr_t_id, "intptr_t");
         RUBY_CONST_ID(uintptr_t_id, "uintptr_t");
+        RUBY_CONST_ID(bool_id, "bool");
         if (type_id == void_id) {
             return INT2NUM(TYPE_VOID);
         }
@@ -144,6 +167,9 @@ rb_fiddle_type_ensure(VALUE type)
         else if (type_id == uintptr_t_id) {
             return INT2NUM(TYPE_UINTPTR_T);
         }
+        else if (type_id == bool_id) {
+            return rb_fiddle_type_bool();
+        }
         else {
             type = original_type;
         }
@@ -209,34 +235,38 @@ rb_fiddle_value_to_generic(int type, VALUE *src, fiddle_generic *dst)
 	dst->pointer = NUM2PTR(rb_Integer(*src));
 	break;
       case TYPE_CHAR:
-	dst->schar = (signed char)NUM2INT(*src);
+        if (RB_TYPE_P(*src, RUBY_T_STRING) && RSTRING_LEN(*src) == 1) {
+            dst->schar = RSTRING_PTR(*src)[0];
+        } else {
+            dst->schar = (signed char)NUM2INT(*src);
+        }
 	break;
-      case -TYPE_CHAR:
+      case TYPE_UCHAR:
 	dst->uchar = (unsigned char)NUM2UINT(*src);
 	break;
       case TYPE_SHORT:
 	dst->sshort = (unsigned short)NUM2INT(*src);
 	break;
-      case -TYPE_SHORT:
+      case TYPE_USHORT:
 	dst->sshort = (signed short)NUM2UINT(*src);
 	break;
       case TYPE_INT:
 	dst->sint = NUM2INT(*src);
 	break;
-      case -TYPE_INT:
+      case TYPE_UINT:
 	dst->uint = NUM2UINT(*src);
 	break;
       case TYPE_LONG:
 	dst->slong = NUM2LONG(*src);
 	break;
-      case -TYPE_LONG:
+      case TYPE_ULONG:
 	dst->ulong = NUM2ULONG(*src);
 	break;
 #if HAVE_LONG_LONG
       case TYPE_LONG_LONG:
 	dst->slong_long = NUM2LL(*src);
 	break;
-      case -TYPE_LONG_LONG:
+      case TYPE_ULONG_LONG:
 	dst->ulong_long = NUM2ULL(*src);
 	break;
 #endif
@@ -283,24 +313,24 @@ rb_fiddle_generic_to_value(VALUE rettype, fiddle_generic retval)
           PTR2NUM((void *)retval.pointer));
       case TYPE_CHAR:
 	return INT2NUM((signed char)retval.fffi_sarg);
-      case -TYPE_CHAR:
+      case TYPE_UCHAR:
 	return INT2NUM((unsigned char)retval.fffi_arg);
       case TYPE_SHORT:
 	return INT2NUM((signed short)retval.fffi_sarg);
-      case -TYPE_SHORT:
+      case TYPE_USHORT:
 	return INT2NUM((unsigned short)retval.fffi_arg);
       case TYPE_INT:
 	return INT2NUM((signed int)retval.fffi_sarg);
-      case -TYPE_INT:
+      case TYPE_UINT:
 	return UINT2NUM((unsigned int)retval.fffi_arg);
       case TYPE_LONG:
 	return LONG2NUM(retval.slong);
-      case -TYPE_LONG:
+      case TYPE_ULONG:
 	return ULONG2NUM(retval.ulong);
 #if HAVE_LONG_LONG
       case TYPE_LONG_LONG:
 	return LL2NUM(retval.slong_long);
-      case -TYPE_LONG_LONG:
+      case TYPE_ULONG_LONG:
 	return ULL2NUM(retval.ulong_long);
 #endif
       case TYPE_FLOAT:

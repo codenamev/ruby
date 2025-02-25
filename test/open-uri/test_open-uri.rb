@@ -172,6 +172,19 @@ class TestOpenURI < Test::Unit::TestCase
     assert_raise(ArgumentError) { URI.open("http://127.0.0.1/", :invalid_option=>true) {} }
   end
 
+  def test_pass_keywords
+    begin
+      f = URI.open(File::NULL, mode: 0666)
+      assert_kind_of File, f
+    ensure
+      f&.close
+    end
+
+    o = Object.new
+    def o.open(foo: ) foo end
+    assert_equal 1, URI.open(o, foo: 1)
+  end
+
   def test_mode
     with_http {|srv, dr, url|
       srv.mount_proc("/mode", lambda { |req, res| res.body = "mode" } )
@@ -902,5 +915,14 @@ class TestOpenURI < Test::Unit::TestCase
     }
   end
 
-end
+  def test_meta_init_doesnt_bump_global_constant_state
+    omit "RubyVM.stat not defined" unless defined? RubyVM.stat
+    omit unless RubyVM.stat.has_key?(:global_constant_state)
 
+    OpenURI::Meta.init(Object.new) # prewarm
+
+    before = RubyVM.stat(:global_constant_state)
+    OpenURI::Meta.init(Object.new)
+    assert_equal 0, RubyVM.stat(:global_constant_state) - before
+  end
+end

@@ -289,7 +289,6 @@ class TestProc < Test::Unit::TestCase
     assert_equal(false, l.lambda?)
     assert_equal(false, l.curry.lambda?, '[ruby-core:24127]')
     assert_equal(false, proc(&l).lambda?)
-    assert_equal(false, assert_deprecated_warning {lambda(&l)}.lambda?)
     assert_equal(false, Proc.new(&l).lambda?)
     l = lambda {}
     assert_equal(true, l.lambda?)
@@ -299,47 +298,21 @@ class TestProc < Test::Unit::TestCase
     assert_equal(true, Proc.new(&l).lambda?)
   end
 
-  def self.helper_test_warn_lamda_with_passed_block &b
+  def helper_test_warn_lambda_with_passed_block &b
     lambda(&b)
   end
 
-  def self.def_lambda_warning name, warn
-    define_method(name, proc do
-      prev = Warning[:deprecated]
-      assert_warn warn do
-        Warning[:deprecated] = true
-        yield
-      end
-    ensure
-      Warning[:deprecated] = prev
-    end)
+  def test_lambda_warning_pass_proc
+    assert_raise(ArgumentError) do
+      b = proc{}
+      lambda(&b)
+    end
   end
 
-  def_lambda_warning 'test_lambda_warning_normal', '' do
-    lambda{}
-  end
-
-  def_lambda_warning 'test_lambda_warning_pass_lambda', '' do
-    b = lambda{}
-    lambda(&b)
-  end
-
-  def_lambda_warning 'test_lambda_warning_pass_symbol_proc', '' do
-    lambda(&:to_s)
-  end
-
-  def_lambda_warning 'test_lambda_warning_pass_proc', /deprecated/ do
-    b = proc{}
-    lambda(&b)
-  end
-
-  def_lambda_warning 'test_lambda_warning_pass_block', /deprecated/ do
-    helper_test_warn_lamda_with_passed_block{}
-  end
-
-  def_lambda_warning 'test_lambda_warning_pass_block_symbol_proc', '' do
-    # Symbol#to_proc returns lambda
-    helper_test_warn_lamda_with_passed_block(&:to_s)
+  def test_lambda_warning_pass_block
+    assert_raise(ArgumentError) do
+      helper_test_warn_lambda_with_passed_block{}
+    end
   end
 
   def test_curry_ski_fib
@@ -443,6 +416,11 @@ class TestProc < Test::Unit::TestCase
     file, lineno = method(:source_location_test).to_proc.binding.source_location
     assert_match(/^#{ Regexp.quote(__FILE__) }$/, file)
     assert_equal(@@line_of_source_location_test, lineno, 'Bug #2427')
+  end
+
+  def test_binding_error_unless_ruby_frame
+    define_singleton_method :binding_from_c!, method(:binding).to_proc >> ->(bndg) {bndg}
+    assert_raise(RuntimeError) { binding_from_c! }
   end
 
   def test_proc_lambda
@@ -852,6 +830,88 @@ class TestProc < Test::Unit::TestCase
     assert_equal [[1, 2], Proc, :x], (pr.call(1, 2){|x| x})
   end
 
+  def test_proc_args_single_kw_no_autosplat
+    pr = proc {|c, a: 1| [c, a] }
+    assert_equal [nil, 1], pr.call()
+    assert_equal [1, 1], pr.call(1)
+    assert_equal [[1], 1], pr.call([1])
+    assert_equal [1, 1], pr.call(1,2)
+    assert_equal [[1, 2], 1], pr.call([1,2])
+
+    assert_equal [nil, 3], pr.call(a: 3)
+    assert_equal [1, 3], pr.call(1, a: 3)
+    assert_equal [[1], 3], pr.call([1], a: 3)
+    assert_equal [1, 3], pr.call(1,2, a: 3)
+    assert_equal [[1, 2], 3], pr.call([1,2], a: 3)
+  end
+
+  def test_proc_args_single_kwsplat_no_autosplat
+    pr = proc {|c, **kw| [c, kw] }
+    assert_equal [nil, {}], pr.call()
+    assert_equal [1, {}], pr.call(1)
+    assert_equal [[1], {}], pr.call([1])
+    assert_equal [1, {}], pr.call(1,2)
+    assert_equal [[1, 2], {}], pr.call([1,2])
+
+    assert_equal [nil, {a: 3}], pr.call(a: 3)
+    assert_equal [1, {a: 3}], pr.call(1, a: 3)
+    assert_equal [[1], {a: 3}], pr.call([1], a: 3)
+    assert_equal [1, {a: 3}], pr.call(1,2, a: 3)
+    assert_equal [[1, 2], {a: 3}], pr.call([1,2], a: 3)
+  end
+
+  def test_proc_args_multiple_kw_autosplat
+    pr = proc {|c, b, a: 1| [c, b, a] }
+    assert_equal [1, 2, 1], pr.call([1,2])
+
+    pr = proc {|c=nil, b=nil, a: 1| [c, b, a] }
+    assert_equal [nil, nil, 1], pr.call([])
+    assert_equal [1, nil, 1], pr.call([1])
+    assert_equal [1, 2, 1], pr.call([1,2])
+
+    pr = proc {|c, b=nil, a: 1| [c, b, a] }
+    assert_equal [1, nil, 1], pr.call([1])
+    assert_equal [1, 2, 1], pr.call([1,2])
+
+    pr = proc {|c=nil, b, a: 1| [c, b, a] }
+    assert_equal [nil, 1, 1], pr.call([1])
+    assert_equal [1, 2, 1], pr.call([1,2])
+
+    pr = proc {|c, *b, a: 1| [c, b, a] }
+    assert_equal [1, [], 1], pr.call([1])
+    assert_equal [1, [2], 1], pr.call([1,2])
+
+    pr = proc {|*c, b, a: 1| [c, b, a] }
+    assert_equal [[], 1, 1], pr.call([1])
+    assert_equal [[1], 2, 1], pr.call([1,2])
+  end
+
+  def test_proc_args_multiple_kwsplat_autosplat
+    pr = proc {|c, b, **kw| [c, b, kw] }
+    assert_equal [1, 2, {}], pr.call([1,2])
+
+    pr = proc {|c=nil, b=nil, **kw| [c, b, kw] }
+    assert_equal [nil, nil, {}], pr.call([])
+    assert_equal [1, nil, {}], pr.call([1])
+    assert_equal [1, 2, {}], pr.call([1,2])
+
+    pr = proc {|c, b=nil, **kw| [c, b, kw] }
+    assert_equal [1, nil, {}], pr.call([1])
+    assert_equal [1, 2, {}], pr.call([1,2])
+
+    pr = proc {|c=nil, b, **kw| [c, b, kw] }
+    assert_equal [nil, 1, {}], pr.call([1])
+    assert_equal [1, 2, {}], pr.call([1,2])
+
+    pr = proc {|c, *b, **kw| [c, b, kw] }
+    assert_equal [1, [], {}], pr.call([1])
+    assert_equal [1, [2], {}], pr.call([1,2])
+
+    pr = proc {|*c, b, **kw| [c, b, kw] }
+    assert_equal [[], 1, {}], pr.call([1])
+    assert_equal [[1], 2, {}], pr.call([1,2])
+  end
+
   def test_proc_args_only_rest
     pr = proc {|*c| c }
     assert_equal [], pr.call()
@@ -1232,6 +1292,54 @@ class TestProc < Test::Unit::TestCase
 
     pr = eval("proc{|"+"(_),"*30+"|}")
     assert_empty(pr.parameters.map{|_,n|n}.compact)
+  end
+
+  def test_proc_autosplat_with_multiple_args_with_ruby2_keywords_splat_bug_19759
+    def self.yielder_ab(splat)
+      yield([:a, :b], *splat)
+    end
+
+    res = yielder_ab([[:aa, :bb], Hash.ruby2_keywords_hash({k: :k})]) do |a, b, k:|
+      [a, b, k]
+    end
+    assert_equal([[:a, :b], [:aa, :bb], :k], res)
+
+    def self.yielder(splat)
+      yield(*splat)
+    end
+    res = yielder([ [:a, :b] ]){|a, b, **| [a, b]}
+    assert_equal([:a, :b], res)
+
+    res = yielder([ [:a, :b], Hash.ruby2_keywords_hash({}) ]){|a, b, **| [a, b]}
+    assert_equal([[:a, :b], nil], res)
+
+    res = yielder([ [:a, :b], Hash.ruby2_keywords_hash({c: 1}) ]){|a, b, **| [a, b]}
+    assert_equal([[:a, :b], nil], res)
+
+    res = yielder([ [:a, :b], Hash.ruby2_keywords_hash({}) ]){|a, b, **nil| [a, b]}
+    assert_equal([[:a, :b], nil], res)
+  end
+
+  def test_parameters_lambda
+    assert_equal([], proc {}.parameters(lambda: true))
+    assert_equal([], proc {||}.parameters(lambda: true))
+    assert_equal([[:req, :a]], proc {|a|}.parameters(lambda: true))
+    assert_equal([[:req, :a], [:req, :b]], proc {|a, b|}.parameters(lambda: true))
+    assert_equal([[:opt, :a], [:block, :b]], proc {|a=:a, &b|}.parameters(lambda: true))
+    assert_equal([[:req, :a], [:opt, :b]], proc {|a, b=:b|}.parameters(lambda: true))
+    assert_equal([[:rest, :a]], proc {|*a|}.parameters(lambda: true))
+    assert_equal([[:req, :a], [:rest, :b], [:block, :c]], proc {|a, *b, &c|}.parameters(lambda: true))
+    assert_equal([[:req, :a], [:rest, :b], [:req, :c]], proc {|a, *b, c|}.parameters(lambda: true))
+    assert_equal([[:req, :a], [:rest, :b], [:req, :c], [:block, :d]], proc {|a, *b, c, &d|}.parameters(lambda: true))
+    assert_equal([[:req, :a], [:opt, :b], [:rest, :c], [:req, :d], [:block, :e]], proc {|a, b=:b, *c, d, &e|}.parameters(lambda: true))
+    assert_equal([[:req], [:block, :b]], proc {|(a), &b|a}.parameters(lambda: true))
+    assert_equal([[:req, :a], [:req, :b], [:opt, :c], [:opt, :d], [:rest, :e], [:req, :f], [:req, :g], [:block, :h]], proc {|a,b,c=:c,d=:d,*e,f,g,&h|}.parameters(lambda: true))
+
+    pr = eval("proc{|"+"(_),"*30+"|}")
+    assert_empty(pr.parameters(lambda: true).map{|_,n|n}.compact)
+
+    assert_equal([[:opt, :a]], lambda {|a|}.parameters(lambda: false))
+    assert_equal([[:opt, :a], [:opt, :b], [:opt, :c], [:opt, :d], [:rest, :e], [:opt, :f], [:opt, :g], [:block, :h]], lambda {|a,b,c=:c,d=:d,*e,f,g,&h|}.parameters(lambda: false))
   end
 
   def pm0() end

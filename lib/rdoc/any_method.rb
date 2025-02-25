@@ -116,6 +116,13 @@ class RDoc::AnyMethod < RDoc::MethodAttr
   end
 
   ##
+  # Whether the method has a call-seq.
+
+  def has_call_seq?
+    !!(@call_seq || is_alias_for&._call_seq)
+  end
+
+  ##
   # Loads is_alias_for from the internal name.  Returns nil if the alias
   # cannot be found.
 
@@ -297,6 +304,14 @@ class RDoc::AnyMethod < RDoc::MethodAttr
   end
 
   ##
+  # Whether to skip the method description, true for methods that have
+  # aliases with a call-seq that doesn't include the method name.
+
+  def skip_description?
+    has_call_seq? && call_seq.nil? && !!(is_alias_for || !aliases.empty?)
+  end
+
+  ##
   # Sets the store for this method and its referenced code objects.
 
   def store= store
@@ -350,12 +365,12 @@ class RDoc::AnyMethod < RDoc::MethodAttr
       ignore << is_alias_for.name
       ignore.concat is_alias_for.aliases.map(&:name)
     end
-    ignore.map! { |n| n =~ /\A\[/ ? n[0, 1] : n}
+    ignore.map! { |n| n =~ /\A\[/ ? /\[.*\]/ : n}
     ignore.delete(method_name)
     ignore = Regexp.union(ignore)
 
     matching = entries.reject do |entry|
-      entry =~ /^\w*\.?#{ignore}/ or
+      entry =~ /^\w*\.?#{ignore}[$\(\s]/ or
         entry =~ /\s#{ignore}\s/
     end
 

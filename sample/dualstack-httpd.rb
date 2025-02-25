@@ -10,14 +10,14 @@ sockpool = []
 names = []
 threads = []
 
-res.each do |i|
+res.reverse_each do |i|
   s = TCPServer.new(i[3], i[1])
-  n = Socket.getnameinfo(s.getsockname, Socket::NI_NUMERICHOST|Socket::NI_NUMERICSERV).join(" port ")
+  n = Socket.getnameinfo(s.getsockname, Socket::NI_NUMERICHOST | Socket::NI_NUMERICSERV).join(" port ")
   sockpool.push s
   names.push n
 end
 
-(0 .. sockpool.size - 1).each do |i|
+(0..sockpool.size - 1).each do |i|
   mysock = sockpool[i]
   myname = names[i]
   STDERR.print "socket #{mysock} started, address #{myname}\n"

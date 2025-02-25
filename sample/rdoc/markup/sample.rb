@@ -14,27 +14,24 @@
 # see the rdoc package.
 #
 
-require 'rdoc/markup/simple_markup'
-require 'rdoc/markup/simple_markup/to_html'
+require 'rdoc'
 
 # Extract the comment block from the source file
 
 input_string = ""
 
-File.foreach("../../../lib/rdoc/markup/simple_markup.rb") do |line|
-  break unless line.gsub!(/^\# ?/, '')
+File.foreach(File.expand_path("../../../lib/rdoc/markup.rb", __dir__)) do |line|
+  break unless line.gsub!(/^\# ?/, "")
+
   input_string << line
 end
 
-# Create a markup object
-markup = SM::SimpleMarkup.new
+# Create an HTML RDoc::Markup converter
+h = RDoc::Markup::ToHtml.new(RDoc::Options.new)
 
-# Attach it to an HTML formatter
-h = SM::ToHtml.new
-
-# And convert out comment block to html. Wrap it a body
+# And convert out comment blocks to html. Wrap it a body
 # tag pair to let browsers view it
 
 puts "<html><body>"
-puts markup.convert(input_string, h)
+puts h.convert(input_string)
 puts "</body></html>"

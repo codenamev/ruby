@@ -40,14 +40,14 @@ require 'socket'
 #   p ipaddr3                   #=> #<IPAddr: IPv4:192.168.2.0/255.255.255.0>
 
 class IPAddr
-  VERSION = "1.2.4"
+  VERSION = "1.2.5"
 
   # 32 bit mask for IPv4
   IN4MASK = 0xffffffff
   # 128 bit mask for IPv6
   IN6MASK = 0xffffffffffffffffffffffffffffffff
   # Format string for IPv6
-  IN6FORMAT = (["%.4x"] * 8).join(':')
+  IN6FORMAT = (["%.4x"] * 8).join(':').freeze
 
   # Regexp _internally_ used for parsing IPv4 address.
   RE_IPV4ADDRLIKE = %r{
@@ -176,9 +176,7 @@ class IPAddr
   def include?(other)
     other = coerce_other(other)
     return false unless other.family == family
-    range = to_range
-    other = other.to_range
-    range.begin <= other.begin && range.end >= other.end
+    begin_addr <= other.begin_addr && end_addr >= other.end_addr
   end
   alias === include?
 
@@ -263,7 +261,8 @@ class IPAddr
   # Returns true if the ipaddr is a private address.  IPv4 addresses
   # in 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16 as defined in RFC
   # 1918 and IPv6 Unique Local Addresses in fc00::/7 as defined in RFC
-  # 4193 are considered private.
+  # 4193 are considered private. Private IPv4 addresses in the
+  # IPv4-mapped IPv6 address range are also considered private.
   def private?
     case @family
     when Socket::AF_INET
@@ -271,7 +270,12 @@ class IPAddr
         @addr & 0xfff00000 == 0xac100000 ||  # 172.16.0.0/12
         @addr & 0xffff0000 == 0xc0a80000     # 192.168.0.0/16
     when Socket::AF_INET6
-      @addr & 0xfe00_0000_0000_0000_0000_0000_0000_0000 == 0xfc00_0000_0000_0000_0000_0000_0000_0000
+      @addr & 0xfe00_0000_0000_0000_0000_0000_0000_0000 == 0xfc00_0000_0000_0000_0000_0000_0000_0000 ||
+        (@addr & 0xffff_0000_0000 == 0xffff_0000_0000 && (
+          @addr & 0xff000000 == 0x0a000000 ||  # ::ffff:10.0.0.0/8
+          @addr & 0xfff00000 == 0xac100000 ||  # ::ffff::172.16.0.0/12
+          @addr & 0xffff0000 == 0xc0a80000     # ::ffff::192.168.0.0/16
+        ))
     else
       raise AddressFamilyError, "unsupported address family"
     end
@@ -400,17 +404,6 @@ class IPAddr
 
   # Creates a Range object for the network address.
   def to_range
-    begin_addr = (@addr & @mask_addr)
-
-    case @family
-    when Socket::AF_INET
-      end_addr = (@addr | (IN4MASK ^ @mask_addr))
-    when Socket::AF_INET6
-      end_addr = (@addr | (IN6MASK ^ @mask_addr))
-    else
-      raise AddressFamilyError, "unsupported address family"
-    end
-
     self.class.new(begin_addr, @family)..self.class.new(end_addr, @family)
   end
 
@@ -490,6 +483,21 @@ class IPAddr
   end
 
   protected
+
+  def begin_addr
+    @addr & @mask_addr
+  end
+
+  def end_addr
+    case @family
+    when Socket::AF_INET
+      @addr | (IN4MASK ^ @mask_addr)
+    when Socket::AF_INET6
+      @addr | (IN6MASK ^ @mask_addr)
+    else
+      raise AddressFamilyError, "unsupported address family"
+    end
+  end
 
   # Set +@addr+, the internal stored ip address, to given +addr+. The
   # parameter +addr+ is validated using the first +family+ member,
@@ -736,7 +744,7 @@ end
 unless Socket.const_defined? :AF_INET6
   class Socket < BasicSocket
     # IPv6 protocol family
-    AF_INET6 = Object.new
+    AF_INET6 = Object.new.freeze
   end
 
   class << IPSocket

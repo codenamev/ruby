@@ -59,7 +59,7 @@ RSpec.describe "bundle doctor" do
       expect(doctor).to receive(:bundles_for_gem).exactly(2).times.and_return ["/path/to/rack/rack.bundle"]
       expect(doctor).to receive(:dylibs).exactly(2).times.and_return ["/usr/local/opt/icu4c/lib/libicui18n.57.1.dylib"]
       allow(Fiddle).to receive(:dlopen).with("/usr/local/opt/icu4c/lib/libicui18n.57.1.dylib").and_raise(Fiddle::DLError)
-      expect { doctor.run }.to raise_error(Bundler::ProductionError, strip_whitespace(<<-E).strip), @stdout.string
+      expect { doctor.run }.to raise_error(Bundler::ProductionError, <<~E.strip), @stdout.string
         The following gems are missing OS dependencies:
          * bundler: /usr/local/opt/icu4c/lib/libicui18n.57.1.dylib
          * rack: /usr/local/opt/icu4c/lib/libicui18n.57.1.dylib
@@ -134,7 +134,7 @@ RSpec.describe "bundle doctor" do
     end
   end
 
-  context "when home contains filesname with special characters" do
+  context "when home contains filenames with special characters" do
     it "escape filename before command execute" do
       doctor = Bundler::CLI::Doctor.new({})
       expect(doctor).to receive(:`).with("/usr/bin/otool -L \\$\\(date\\)\\ \\\"\\'\\\\.bundle").and_return("dummy string")

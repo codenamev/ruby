@@ -98,6 +98,16 @@ RSpec.describe Bundler::Fetcher::Downloader do
       end
     end
 
+    context "when the request response is a Net::HTTPForbidden" do
+      let(:http_response) { Net::HTTPForbidden.new("1.1", 403, "Forbidden") }
+      let(:uri) { Bundler::URI("http://user:password@www.uri-to-fetch.com") }
+
+      it "should raise a Bundler::Fetcher::AuthenticationForbiddenError with the uri host" do
+        expect { subject.fetch(uri, options, counter) }.to raise_error(Bundler::Fetcher::AuthenticationForbiddenError,
+          /Access token could not be authenticated for www.uri-to-fetch.com/)
+      end
+    end
+
     context "when the request response is a Net::HTTPNotFound" do
       let(:http_response) { Net::HTTPNotFound.new("1.1", 404, "Not Found") }
 
@@ -174,26 +184,6 @@ RSpec.describe Bundler::Fetcher::Downloader do
         it "should request basic authentication with the proper cgi compliant password user" do
           expect(net_http_get).to receive(:basic_auth).with("username$", nil)
           subject.request(uri, options)
-        end
-      end
-    end
-
-    context "when the request response causes a NoMethodError" do
-      before { allow(connection).to receive(:request).with(uri, net_http_get) { raise NoMethodError.new(message) } }
-
-      context "and the error message is about use_ssl=" do
-        let(:message) { "undefined method 'use_ssl='" }
-
-        it "should raise a LoadError about openssl" do
-          expect { subject.request(uri, options) }.to raise_error(LoadError, "cannot load such file -- openssl")
-        end
-      end
-
-      context "and the error message is not about use_ssl=" do
-        let(:message) { "undefined method 'undefined_method_call'" }
-
-        it "should raise the original NoMethodError" do
-          expect { subject.request(uri, options) }.to raise_error(NoMethodError, /undefined method 'undefined_method_call'/)
         end
       end
     end

@@ -14,6 +14,11 @@ describe "String#scrub with a default replacement" do
     "abc\u3042#{x81}".scrub.should == "abc\u3042\uFFFD"
   end
 
+  it "replaces invalid byte sequences in lazy substrings" do
+    x81 = [0x81].pack('C').force_encoding('utf-8')
+    "abc\u3042#{x81}def"[1...-1].scrub.should == "bc\u3042\uFFFDde"
+  end
+
   it "returns a copy of self when the input encoding is BINARY" do
     input = "foo".encode('BINARY')
 
@@ -26,18 +31,15 @@ describe "String#scrub with a default replacement" do
     input.scrub.should == "abc?????"
   end
 
-  ruby_version_is '3.0' do
-    it "returns String instances when called on a subclass" do
-      StringSpecs::MyString.new("foo").scrub.should be_an_instance_of(String)
-      input = [0x81].pack('C').force_encoding('utf-8')
-      StringSpecs::MyString.new(input).scrub.should be_an_instance_of(String)
-    end
+  it "returns a String in the same encoding as self" do
+    x81 = [0x81].pack('C').force_encoding('utf-8')
+    "abc\u3042#{x81}".scrub.encoding.should == Encoding::UTF_8
   end
 
-  ruby_version_is ''...'3.0' do
-    it "returns subclass instances when called on a subclass" do
-      StringSpecs::MyString.new("foo").scrub.should be_an_instance_of(StringSpecs::MyString)
-    end
+  it "returns String instances when called on a subclass" do
+    StringSpecs::MyString.new("foo").scrub.should be_an_instance_of(String)
+    input = [0x81].pack('C').force_encoding('utf-8')
+    StringSpecs::MyString.new(input).scrub.should be_an_instance_of(String)
   end
 end
 
@@ -75,6 +77,11 @@ describe "String#scrub with a custom replacement" do
     block.should raise_error(ArgumentError)
   end
 
+  it "returns a String in the same encoding as self" do
+    x81 = [0x81].pack('C').force_encoding('utf-8')
+    "abc\u3042#{x81}".scrub("*").encoding.should == Encoding::UTF_8
+  end
+
   it "raises TypeError when a non String replacement is given" do
     x81 = [0x81].pack('C').force_encoding('utf-8')
     block = -> { "foo#{x81}".scrub(1) }
@@ -82,12 +89,10 @@ describe "String#scrub with a custom replacement" do
     block.should raise_error(TypeError)
   end
 
-  ruby_version_is '3.0' do
-    it "returns String instances when called on a subclass" do
-      StringSpecs::MyString.new("foo").scrub("*").should be_an_instance_of(String)
-      input = [0x81].pack('C').force_encoding('utf-8')
-      StringSpecs::MyString.new(input).scrub("*").should be_an_instance_of(String)
-    end
+  it "returns String instances when called on a subclass" do
+    StringSpecs::MyString.new("foo").scrub("*").should be_an_instance_of(String)
+    input = [0x81].pack('C').force_encoding('utf-8')
+    StringSpecs::MyString.new(input).scrub("*").should be_an_instance_of(String)
   end
 end
 
@@ -114,12 +119,10 @@ describe "String#scrub with a block" do
     replaced.should == "€€"
   end
 
-  ruby_version_is '3.0' do
-    it "returns String instances when called on a subclass" do
-      StringSpecs::MyString.new("foo").scrub { |b| "*" }.should be_an_instance_of(String)
-      input = [0x81].pack('C').force_encoding('utf-8')
-      StringSpecs::MyString.new(input).scrub { |b| "<#{b.unpack("H*")[0]}>" }.should be_an_instance_of(String)
-    end
+  it "returns String instances when called on a subclass" do
+    StringSpecs::MyString.new("foo").scrub { |b| "*" }.should be_an_instance_of(String)
+    input = [0x81].pack('C').force_encoding('utf-8')
+    StringSpecs::MyString.new(input).scrub { |b| "<#{b.unpack("H*")[0]}>" }.should be_an_instance_of(String)
   end
 end
 

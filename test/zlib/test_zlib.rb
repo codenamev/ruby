@@ -506,6 +506,7 @@ if defined? Zlib
     end
 
     def test_multithread_deflate
+      pend 'hangs' if RUBY_ENGINE == 'truffleruby'
       zd = Zlib::Deflate.new
 
       s = "x" * 10000
@@ -522,6 +523,7 @@ if defined? Zlib
     end
 
     def test_multithread_inflate
+      pend 'hangs' if RUBY_ENGINE == 'truffleruby'
       zi = Zlib::Inflate.new
 
       s = Zlib.deflate("x" * 10000)
@@ -792,7 +794,7 @@ if defined? Zlib
       }
     end
 
-    if defined? File::TMPFILE
+    if defined?(File::TMPFILE) and RUBY_ENGINE != 'truffleruby'
       def test_path_tmpfile
         sio = StringIO.new("".dup, 'w')
         gz = Zlib::GzipWriter.new(sio)
@@ -804,10 +806,16 @@ if defined? Zlib
           io.rewind
 
           gz0 = Zlib::GzipWriter.new(io)
-          assert_raise(NoMethodError) { gz0.path }
-
           gz1 = Zlib::GzipReader.new(io)
-          assert_raise(NoMethodError) { gz1.path }
+
+          if IO.method_defined?(:path)
+            assert_nil gz0.path
+            assert_nil gz1.path
+          else
+            assert_raise(NoMethodError) { gz0.path }
+            assert_raise(NoMethodError) { gz1.path }
+          end
+
           gz0.close
           gz1.close
         end
@@ -1303,6 +1311,7 @@ if defined? Zlib
       assert_equal(0x02820145, Zlib.adler32("foo"))
       assert_equal(0x02820145, Zlib.adler32("o", Zlib.adler32("fo")))
       assert_equal(0x8a62c964, Zlib.adler32("abc\x01\x02\x03" * 10000))
+      assert_equal(0x97d1a9f7, Zlib.adler32("p", -305419897))
       Tempfile.create("test_zlib_gzip_file_to_io") {|t|
         File.binwrite(t.path, "foo")
         t.rewind
@@ -1338,6 +1347,7 @@ if defined? Zlib
       assert_equal(0x8c736521, Zlib.crc32("foo"))
       assert_equal(0x8c736521, Zlib.crc32("o", Zlib.crc32("fo")))
       assert_equal(0x07f0d68f, Zlib.crc32("abc\x01\x02\x03" * 10000))
+      assert_equal(0xf136439b, Zlib.crc32("p", -305419897))
       Tempfile.create("test_zlib_gzip_file_to_io") {|t|
         File.binwrite(t.path, "foo")
         t.rewind
@@ -1447,6 +1457,13 @@ if defined? Zlib
 
       src = %w[1f8b080000000000000].pack("H*")
       assert_raise(Zlib::GzipFile::Error){ Zlib.gunzip(src) }
+    end
+
+    # Zlib.gunzip input is always considered a binary string, regardless of its String#encoding.
+    def test_gunzip_encoding
+      #                vvvvvvvv = mtime, but valid UTF-8 string of U+0080
+      src = %w[1f8b0800c28000000003cb48cdc9c9070086a6103605000000].pack("H*").force_encoding('UTF-8')
+      assert_equal 'hello', Zlib.gunzip(src.freeze)
     end
 
     def test_gunzip_no_memory_leak

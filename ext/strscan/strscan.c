@@ -22,7 +22,7 @@ extern size_t onig_region_memsize(const struct re_registers *regs);
 
 #include <stdbool.h>
 
-#define STRSCAN_VERSION "3.0.1"
+#define STRSCAN_VERSION "3.0.7"
 
 /* =======================================================================
                          Data Type Definitions
@@ -435,11 +435,11 @@ strscan_get_pos(VALUE self)
  *
  * In short, it's a 0-based index into the string.
  *
- *   s = StringScanner.new("abcädeföghi")
- *   s.charpos           # -> 0
- *   s.scan_until(/ä/)   # -> "abcä"
- *   s.pos               # -> 5
- *   s.charpos           # -> 4
+ *   s = StringScanner.new("abc\u00e4def\u00f6ghi")
+ *   s.charpos                # -> 0
+ *   s.scan_until(/\u00e4/)   # -> "abc\u00E4"
+ *   s.pos                    # -> 5
+ *   s.charpos                # -> 4
  */
 static VALUE
 strscan_get_charpos(VALUE self)
@@ -539,6 +539,68 @@ adjust_register_position(struct strscanner *p, long position)
     }
 }
 
+/* rb_reg_onig_match is available in Ruby 3.3 and later. */
+#ifndef HAVE_RB_REG_ONIG_MATCH
+static OnigPosition
+rb_reg_onig_match(VALUE re, VALUE str,
+                  OnigPosition (*match)(regex_t *reg, VALUE str, struct re_registers *regs, void *args),
+                  void *args, struct re_registers *regs)
+{
+    regex_t *reg = rb_reg_prepare_re(re, str);
+
+    bool tmpreg = reg != RREGEXP_PTR(re);
+    if (!tmpreg) RREGEXP(re)->usecnt++;
+
+    OnigPosition result = match(reg, str, regs, args);
+
+    if (!tmpreg) RREGEXP(re)->usecnt--;
+    if (tmpreg) {
+        if (RREGEXP(re)->usecnt) {
+            onig_free(reg);
+        }
+        else {
+            onig_free(RREGEXP_PTR(re));
+            RREGEXP_PTR(re) = reg;
+        }
+    }
+
+    if (result < 0) {
+        if (result != ONIG_MISMATCH) {
+            rb_raise(ScanError, "regexp buffer overflow");
+        }
+    }
+
+    return result;
+}
+#endif
+
+static OnigPosition
+strscan_match(regex_t *reg, VALUE str, struct re_registers *regs, void *args_ptr)
+{
+    struct strscanner *p = (struct strscanner *)args_ptr;
+
+    return onig_match(reg,
+                      match_target(p),
+                      (UChar* )(CURPTR(p) + S_RESTLEN(p)),
+                      (UChar* )CURPTR(p),
+                      regs,
+                      ONIG_OPTION_NONE);
+}
+
+static OnigPosition
+strscan_search(regex_t *reg, VALUE str, struct re_registers *regs, void *args_ptr)
+{
+    struct strscanner *p = (struct strscanner *)args_ptr;
+
+    return onig_search(reg,
+                       match_target(p),
+                       (UChar *)(CURPTR(p) + S_RESTLEN(p)),
+                       (UChar *)CURPTR(p),
+                       (UChar *)(CURPTR(p) + S_RESTLEN(p)),
+                       regs,
+                       ONIG_OPTION_NONE);
+}
+
 static VALUE
 strscan_do_scan(VALUE self, VALUE pattern, int succptr, int getstr, int headonly)
 {
@@ -560,47 +622,14 @@ strscan_do_scan(VALUE self, VALUE pattern, int succptr, int getstr, int headonly
     }
 
     if (RB_TYPE_P(pattern, T_REGEXP)) {
-        regex_t *rb_reg_prepare_re(VALUE re, VALUE str);
-        regex_t *re;
-        long ret;
-        int tmpreg;
-
         p->regex = pattern;
-        re = rb_reg_prepare_re(pattern, p->str);
-        tmpreg = re != RREGEXP_PTR(pattern);
-        if (!tmpreg) RREGEXP(pattern)->usecnt++;
+        OnigPosition ret = rb_reg_onig_match(pattern,
+                                             p->str,
+                                             headonly ? strscan_match : strscan_search,
+                                             (void *)p,
+                                             &(p->regs));
 
-        if (headonly) {
-            ret = onig_match(re,
-                             match_target(p),
-                             (UChar* )(CURPTR(p) + S_RESTLEN(p)),
-                             (UChar* )CURPTR(p),
-                             &(p->regs),
-                             ONIG_OPTION_NONE);
-        }
-        else {
-            ret = onig_search(re,
-                              match_target(p),
-                              (UChar* )(CURPTR(p) + S_RESTLEN(p)),
-                              (UChar* )CURPTR(p),
-                              (UChar* )(CURPTR(p) + S_RESTLEN(p)),
-                              &(p->regs),
-                              ONIG_OPTION_NONE);
-        }
-        if (!tmpreg) RREGEXP(pattern)->usecnt--;
-        if (tmpreg) {
-            if (RREGEXP(pattern)->usecnt) {
-                onig_free(re);
-            }
-            else {
-                onig_free(RREGEXP_PTR(pattern));
-                RREGEXP_PTR(pattern) = re;
-            }
-        }
-
-        if (ret == -2) rb_raise(ScanError, "regexp buffer overflow");
-        if (ret < 0) {
-            /* not matched */
+        if (ret == ONIG_MISMATCH) {
             return Qnil;
         }
     }
@@ -1038,8 +1067,9 @@ strscan_empty_p(VALUE self)
  * This method is obsolete; use #eos? instead.
  *
  *   s = StringScanner.new('test string')
- *   s.eos?              # These two
- *   s.rest?             # are opposites.
+ *   # These two are opposites
+ *   s.eos? # => false
+ *   s.rest? # => true
  */
 static VALUE
 strscan_rest_p(VALUE self)
@@ -1458,6 +1488,56 @@ strscan_fixed_anchor_p(VALUE self)
     return p->fixed_anchor_p ? Qtrue : Qfalse;
 }
 
+typedef struct {
+    VALUE self;
+    VALUE captures;
+} named_captures_data;
+
+static int
+named_captures_iter(const OnigUChar *name,
+                    const OnigUChar *name_end,
+                    int back_num,
+                    int *back_refs,
+                    OnigRegex regex,
+                    void *arg)
+{
+    named_captures_data *data = arg;
+
+    VALUE key = rb_str_new((const char *)name, name_end - name);
+    VALUE value = RUBY_Qnil;
+    int i;
+    for (i = 0; i < back_num; i++) {
+        value = strscan_aref(data->self, INT2NUM(back_refs[i]));
+    }
+    rb_hash_aset(data->captures, key, value);
+    return 0;
+}
+
+/*
+ * call-seq:
+ *   scanner.named_captures -> hash
+ *
+ * Returns a hash of string variables matching the regular expression.
+ *
+ *   scan = StringScanner.new('foobarbaz')
+ *   scan.match?(/(?<f>foo)(?<r>bar)(?<z>baz)/)
+ *   scan.named_captures # -> {"f"=>"foo", "r"=>"bar", "z"=>"baz"}
+ */
+static VALUE
+strscan_named_captures(VALUE self)
+{
+    struct strscanner *p;
+    GET_SCANNER(self, p);
+    named_captures_data data;
+    data.self = self;
+    data.captures = rb_hash_new();
+    if (!RB_NIL_P(p->regex)) {
+        onig_foreach_name(RREGEXP_PTR(p->regex), named_captures_iter, &data);
+    }
+
+    return data.captures;
+}
+
 /* =======================================================================
                               Ruby Interface
    ======================================================================= */
@@ -1467,6 +1547,8 @@ strscan_fixed_anchor_p(VALUE self)
  *
  * StringScanner provides for lexical scanning operations on a String.  Here is
  * an example of its usage:
+ *
+ *   require 'strscan'
  *
  *   s = StringScanner.new('This is an example string')
  *   s.eos?               # -> false
@@ -1650,4 +1732,6 @@ Init_strscan(void)
     rb_define_method(StringScanner, "inspect",     strscan_inspect,     0);
 
     rb_define_method(StringScanner, "fixed_anchor?", strscan_fixed_anchor_p, 0);
+
+    rb_define_method(StringScanner, "named_captures", strscan_named_captures, 0);
 }

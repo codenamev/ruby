@@ -15,7 +15,7 @@ module Bundler
     class UnknownSourceError < PluginError; end
     class PluginInstallError < PluginError; end
 
-    PLUGIN_FILE_NAME = "plugins.rb".freeze
+    PLUGIN_FILE_NAME = "plugins.rb"
 
     module_function
 
@@ -36,6 +36,8 @@ module Bundler
     # @param [Hash] options various parameters as described in description.
     #               Refer to cli/plugin for available options
     def install(names, options)
+      raise InvalidOption, "You cannot specify `--branch` and `--ref` at the same time." if options["branch"] && options["ref"]
+
       specs = Installer.new.install(names, options)
 
       save_plugins names, specs
@@ -195,7 +197,7 @@ module Bundler
     # @param [Hash] The options that are present in the lock file
     # @return [API::Source] the instance of the class that handles the source
     #                       type passed in locked_opts
-    def source_from_lock(locked_opts)
+    def from_lock(locked_opts)
       src = source(locked_opts["type"])
 
       src.new(locked_opts.merge("uri" => locked_opts["remote"]))

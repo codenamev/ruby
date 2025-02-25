@@ -32,11 +32,11 @@ module Bundler
           name, versions_string, info_checksum = line.split(" ", 3)
           info_checksums_by_name[name] = info_checksum || ""
           versions_string.split(",").each do |version|
-            if version.start_with?("-")
-              version = version[1..-1].split("-", 2).unshift(name)
+            delete = version.delete_prefix!("-")
+            version = version.split("-", 2).unshift(name)
+            if delete
               versions_by_name[name].delete(version)
             else
-              version = version.split("-", 2).unshift(name)
               versions_by_name[name] << version
             end
           end
@@ -68,7 +68,7 @@ module Bundler
 
       def info_path(name)
         name = name.to_s
-        if name =~ /[^a-z0-9_-]/
+        if /[^a-z0-9_-]/.match?(name)
           name += "-#{SharedHelpers.digest(:MD5).hexdigest(name).downcase}"
           info_roots.last.join(name)
         else
